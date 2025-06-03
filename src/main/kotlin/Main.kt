@@ -116,10 +116,15 @@ class Interpolation {
         }
     }
 
+
     private fun isEquidistant(): Boolean {
         if (points.size < 2) return false
         val h = points[1].x - points[0].x
-        return points.zipWithNext().all { (a, b) -> abs((b.x - a.x) - h) < 1e-9 }
+        val epsilon = max(1e-14, 1e-14 * abs(h))
+
+        return points.zipWithNext().all { (a, b) ->
+            abs((b.x - a.x) - h) < epsilon
+        }
     }
 
     private fun lagrangeInterpolation(x: Double): Double {
@@ -139,10 +144,23 @@ class Interpolation {
 
 
     fun newtonUneven(x: Double): Double {
+        if (isEquidistant()) {
+            return 0.0
+        }
         if (points.isEmpty()) return 0.0
         val table = computeDifferenceTable()
         var result = table[0][0]
         var product = 1.0
+
+        for (i in table.indices) {
+            for (j in 0 until table[i].size-1) {
+                if(i + j + 1 > 7){
+                    break
+                }
+                print(" | F(x${i}..x${i+j}) = ${dividedDifference(i,j)}")
+            }
+            println()
+        }
         for (i in 1 until points.size) {
             product *= (x - points[i - 1].x)
             result += product * dividedDifference(0, i)
@@ -156,58 +174,56 @@ class Interpolation {
                 (points[start + order].x - points[start].x)
     }
 
-    fun newtonEven(x: Double): Double {
-        if (!isEquidistant()) {
-            println("Невозможно применить метод Ньютона с равными шагами: точки неравноудалённые.")
-            return 0.0
-        }
-        val table = computeDifferenceTable()
-        val h = points[1].x - points[0].x
-        val t = (x - points[0].x) / h
-        var result = table[0][0]
-        var term = 1.0
-        for (k in 1 until points.size) {
-            term *= (t - (k - 1))
-            result += term * table[0][k] / factorial(k)
-        }
-        return result
-    }
-
     fun gaussInterpolation(x: Double): Double {
         if (!isEquidistant()) {
-            println("Метод Гаусса требует равноудалённых узлов.")
             return 0.0
         }
-
         val table = computeDifferenceTable()
         val n = points.size
-        val mid = n / 2
         val h = points[1].x - points[0].x
-        val t = (x - points[mid].x) / h
 
-        var result = table[mid][0]
-        var term = 1.0
-        var factorial = 1.0
-        var sign = 1
+        if (x <= points[n/2].x) {
+            var startIndex = 0
+            for (i in 0 until n-1) {
+                if (x >= points[i].x && x <= points[i+1].x) {
+                    startIndex = i
+                    break
+                }
+            }
+            if (x < points[0].x) startIndex = 0
+            if (x > points.last().x) startIndex = n-1
 
-        for (k in 1 until n) {
-            // Расчёт коэффициента t(t-1)(t+1)(t-2)(t+2)... по нужному порядку
-            term *= if (k % 2 == 1) t - (k / 2) else t + (k / 2)
-            factorial *= k
+            val t = (x - points[startIndex].x) / h
+            var result = table[startIndex][0]
+            var term = 1.0
+            var factorial = 1.0
 
-            // Индексы по формуле: y0, y-1, y-1, y-2, y-2, ...
-            val index = mid - (k / 2)
+            for (k in 1 until n) {
+                term *= (t - k + 1)
+                factorial *= k
+                if (startIndex + k >= table.size) break
+                println("Таблица : ${table[startIndex][k]}")
+                result += (term / factorial) * table[startIndex][k]
+            }
+            return result
+        } else {
+            val startIndex = points.lastIndex
+            val t = (x - points[startIndex].x) / h
+            var result = table[startIndex][0]
+            var term = 1.0
+            var factorial = 1.0
 
-            if (index < 0 || index >= n || k >= n) break
-            result += (term / factorial) * table[index][k]
+            for (k in 1 until n) {
+                term *= (t + k - 1)
+                factorial *= k
+                if (startIndex - k < 0) break
+
+                result += (term / factorial) * table[startIndex - k][k]
+
+                println("Таблица : ${table[startIndex - k][k]}")
+            }
+            return result
         }
-
-        return result
-    }
-
-    private fun factorial(n: Int): Double {
-        if (n <= 1) return 1.0
-        return (2..n).fold(1.0) { acc, i -> acc * i }
     }
 
     fun plotInterpolation() {
@@ -236,7 +252,7 @@ class Interpolation {
                 xFunc[i] = minX + i * step
                 yFunc[i] = testFunction!!(xFunc[i])
             }
-            chart.addSeries("Original Function", xFunc, yFunc).lineColor = java.awt.Color.BLUE
+            chart.addSeries("Заданная функция", xFunc, yFunc).lineColor = java.awt.Color.BLUE
         }
 
         val xPoly = DoubleArray(100)
@@ -248,20 +264,24 @@ class Interpolation {
         val step = (maxX - minX) / 99
         for (i in 0 until 100) {
             xPoly[i] = minX + i * step
-            yLagrange[i] = lagrangeInterpolation(xPoly[i])
-            yNewton[i] = if (isEquidistant()) newtonEven(xPoly[i]) else newtonUneven(xPoly[i])
+            yLagrange[i] = lagrangeInterpolation(xPoly[i]+0.001)
+            yNewton[i] = newtonUneven(xPoly[i])
             yGauss[i] = gaussInterpolation(xPoly[i])
         }
-        chart.addSeries("Lagrange", xPoly, yLagrange).lineColor = java.awt.Color.RED
-        chart.addSeries("Newton", xPoly, yNewton).lineColor = java.awt.Color.GREEN
-        chart.addSeries("Gauss", xPoly, yGauss).lineColor = java.awt.Color.MAGENTA
-        val seriesPoints = chart.addSeries("Points", xData, yData)
+        chart.addSeries("Лагранж", xPoly, yLagrange).lineColor = java.awt.Color.RED
+        if (isEquidistant()){
+            chart.addSeries("Ньютон конечных разностей", xPoly, yGauss).lineColor = java.awt.Color.MAGENTA
+        }
+        else{
+            chart.addSeries("Ньютон разделённых разностей", xPoly, yNewton).lineColor = java.awt.Color.GREEN
+        }
+        val seriesPoints = chart.addSeries("Узлы интрополяции", xData, yData)
         seriesPoints.lineStyle = SeriesLines.NONE
         seriesPoints.marker = SeriesMarkers.CIRCLE
 
         chart.styler.xAxisMin= points.minOf { it.x }
         chart.styler.xAxisMax = points.maxOf { it.x }
-        chart.styler.yAxisMin = points.minOf { it.y } - 1  // немного отступа
+        chart.styler.yAxisMin = points.minOf { it.y } - 1
         chart.styler.yAxisMax = points.maxOf { it.y } + 1
 
 
@@ -275,17 +295,17 @@ class Interpolation {
         }
         println("Интерполяция для x = $xTest:")
         val lagrange = lagrangeInterpolation(xTest)
-        val newton = if (isEquidistant()) newtonEven(xTest) else newtonUneven(xTest)
+        val newton = newtonUneven(xTest)
         val gauss = gaussInterpolation(xTest)
         println("Лагранж: $lagrange")
-        println("Ньютон (${if (isEquidistant()) "равноудалённые" else "разноудалённые"}): $newton")
-        println("Гаусс: $gauss")
+        println("Ньютона для разделённых разностей: $newton")
+        println("Ньютона для конечных разностей: $gauss")
         if (testFunction != null) {
             val exact = testFunction!!(xTest)
             println("Точное значение: $exact")
             println("Ошибка Лагранжа: ${abs(exact - lagrange)}")
-            println("Ошибка Ньютона: ${abs(exact - newton)}")
-            println("Ошибка Гаусса: ${abs(exact - gauss)}")
+            println("Ошибка Ньютона для разделённых разностей: ${if (!isEquidistant()) abs(exact - newton) else "Не может быть подсчитано"}")
+            println("Ошибка Ньютона для конечных разностей: ${if (isEquidistant()) abs(exact - gauss) else "Не может быть подсчитано"}")
         }
     }
 
